@@ -1,0 +1,62 @@
+export const TOKEN_ABI = [
+  { name: 'balanceOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'account', type: 'address' }], outputs: [{ type: 'uint256' }] },
+  { name: 'decimals', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] },
+  { name: 'symbol', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+  { name: 'transfer', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }], outputs: [{ type: 'bool' }] },
+  { name: 'approve', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'value', type: 'uint256' }], outputs: [{ type: 'bool' }] },
+  { name: 'allowance', type: 'function', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], outputs: [{ type: 'uint256' }] },
+] as const;
+
+export const SALE_ABI = [
+  { name: 'purchaseWithEth', type: 'function', stateMutability: 'payable', inputs: [], outputs: [] },
+  { name: 'purchaseWithERC20', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_currency', type: 'address' }, { name: '_amount', type: 'uint256' }], outputs: [] },
+  { name: 'previewTokenAmount', type: 'function', stateMutability: 'view', inputs: [{ name: '_currency', type: 'address' }, { name: '_paidAmount', type: 'uint256' }], outputs: [{ name: 'tokenAmount', type: 'uint256' }] },
+  { name: 'canPurchase', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }, { name: '_tokenAmount', type: 'uint256' }], outputs: [{ type: 'bool' }] },
+  { name: 'canPurchaseWithPayment', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }, { name: '_currency', type: 'address' }, { name: '_paidAmount', type: 'uint256' }], outputs: [{ type: 'bool' }] },
+  { name: 'getPurchaseInfo', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }], outputs: [{ name: 'purchased', type: 'uint256' }, { name: 'remainingCap', type: 'uint256' }, { name: 'lastPurchase', type: 'uint256' }, { name: 'cooldownRemaining', type: 'uint256' }] },
+  { name: 'getCurrencyInfo', type: 'function', stateMutability: 'view', inputs: [{ name: '_currency', type: 'address' }], outputs: [{ name: 'supported', type: 'bool' }, { name: 'decimals_', type: 'uint8' }, { name: 'price', type: 'uint256' }] },
+  { name: 'getSupportedCurrencies', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
+  { name: 'remainingSaleCap', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'remainingWalletCap', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }], outputs: [{ type: 'uint256' }] },
+  { name: 'saleStart', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'saleEnd', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'tokenPrice', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'totalSold', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'saleCap', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'minPurchase', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'walletCap', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'purchaseCooldown', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'availableTokensInVesting', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+] as const;
+
+export const AIRDROP_ABI = [
+  { name: 'claim', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_amount', type: 'uint256' }, { name: '_merkleProof', type: 'bytes32[]' }], outputs: [] },
+  { name: 'canClaim', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }, { name: '_amount', type: 'uint256' }, { name: '_merkleProof', type: 'bytes32[]' }], outputs: [{ type: 'bool' }] },
+  { name: 'hasUserClaimed', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }], outputs: [{ type: 'bool' }] },
+  { name: 'isClaimWindowOpen', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'bool' }] },
+  { name: 'claimStart', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'claimDeadline', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'merkleRoot', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'bytes32' }] },
+  { name: 'maxAirdropAllocation', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'totalAllocated', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'totalClaimers', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'timeUntilStart', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'timeUntilDeadline', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'getAirdropState', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] },
+  { name: 'getLeaf', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }, { name: '_amount', type: 'uint256' }], outputs: [{ type: 'bytes32' }] },
+] as const;
+
+export const VESTING_ABI = [
+  { name: 'claim', type: 'function', stateMutability: 'nonpayable', inputs: [], outputs: [] },
+  { name: 'calculateReleasable', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }], outputs: [{ type: 'uint256' }] },
+  { name: 'vestingSchedules', type: 'function', stateMutability: 'view', inputs: [{ name: '', type: 'address' }], outputs: [{ name: 'totalAllocation', type: 'uint256' }, { name: 'claimedAmount', type: 'uint256' }, { name: 'startTime', type: 'uint256' }, { name: 'exists', type: 'bool' }] },
+  { name: 'getReservedTokens', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'projectLaunchTime', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'CLIFF_PERIOD', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'MONTHLY_INTERVAL', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'TOTAL_TRANCHES', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'TRANCHE_PERCENTAGE', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'totalAllocated', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'totalClaimedAmount', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { name: 'isUserRegistered', type: 'function', stateMutability: 'view', inputs: [{ name: '', type: 'address' }], outputs: [{ type: 'bool' }] },
+] as const;
