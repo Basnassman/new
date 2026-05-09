@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react';
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits, formatUnits, type Hash } from 'viem';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -25,62 +27,67 @@ function formatCountdown(seconds: number): string {
 }
 
 function parseContractError(err: unknown): string {
-  const msg = (
-    (err as { shortMessage?: string })?.shortMessage ||
-    (err as { message?: string })?.message ||
-    ''
-  ).toLowerCase();
-  if (msg.includes('user rejected')) return 'Transaction rejected by user.';
-  if (msg.includes('insufficient balance')) return 'Insufficient balance.';
+  const errorObj = err as Record<string, any>;
+  const msg = (errorObj?.shortMessage || errorObj?.message || '').toLowerCase();
+
+  console.error('Transaction Error Details:', {
+    shortMessage: errorObj?.shortMessage,
+    message: errorObj?.message,
+    cause: errorObj?.cause,
+  });
+
+  if (msg.includes('user rejected') || msg.includes('user denied')) return 'Transaction rejected by user.';
+  if (msg.includes('insufficient balance')) return 'Insufficient balance for this transaction.';
   if (msg.includes('exceeds wallet cap')) return 'Purchase exceeds your wallet cap.';
   if (msg.includes('exceeds sale cap')) return 'Purchase exceeds remaining sale cap.';
   if (msg.includes('sale not active')) return 'Sale is not currently active.';
   if (msg.includes('cooldown')) return 'You must wait before making another purchase.';
   if (msg.includes('minimum purchase')) return 'Amount is below minimum purchase.';
-  return 'Transaction failed. Please try again.';
+  if (msg.includes('insufficient allowance')) return 'Please approve the token first.';
+  if (msg.includes('execution reverted')) return 'Transaction failed. Check your balance and try again.';
+
+  return 'Transaction failed. Please check your inputs and try again.';
 }
 
-// ─── Sale States ──────────────────────────────────────────────────────────────
+// ─── Sale States ──────────────────────────────────────────────────────────
 const SALE_STATES: Record<number, { label: string; color: string; bg: string }> = {
   0: { label: 'Inactive', color: 'text-zinc-400', bg: 'bg-zinc-800' },
   1: { label: 'Active', color: 'text-emerald-400', bg: 'bg-emerald-900/20' },
   2: { label: 'Ended', color: 'text-red-400', bg: 'bg-red-900/20' },
 };
 
+type TransactionStep = 'idle' | 'approving' | 'approved' | 'purchasing' | 'waiting';
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function BuyPage() {
   const { address, isConnected } = useAccount();
 
   const [txHash, setTxHash] = useState<Hash | null>(null);
-  const [step, setStep] = useState<'idle' | 'approving' | 'approved' | 'purchasing' | 'waiting'>('idle');
+  const [step, setStep] = useState<TransactionStep>('idle');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [countdown, setCountdown] = useState(0);
-  const [selectedCurrency, setSelectedCurrency] = useState<Currency>('FOR');
+  const [selectedCurrency, setSelectedCurrency] = useState<Currency>('ETH');
 
   // ── Contract Reads ────────────────────────────────────────────────────────────
   const { data: saleState } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
     functionName: 'getSaleState',
+    query: { refetchInterval: 30000 },
   });
 
   const { data: totalSold } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
     functionName: 'totalSold',
+    query: { refetchInterval: 30000 },
   });
 
   const { data: saleCap } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
     functionName: 'saleCap',
-  });
-
-  const { data: saleStart } = useReadContract({
-    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
-    abi: SALE_ABI,
-    functionName: 'saleStart',
   });
 
   const { data: saleEnd } = useReadContract({
@@ -93,12 +100,14 @@ export default function BuyPage() {
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
     functionName: 'totalBuyers',
+    query: { refetchInterval: 60000 },
   });
 
   const { data: remainingSaleCap } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
     functionName: 'remainingSaleCap',
+    query: { refetchInterval: 30000 },
   });
 
   // ── User Info ─────────────────────────────────────────────────────────────────
@@ -107,31 +116,47 @@ export default function BuyPage() {
     abi: SALE_ABI,
     functionName: 'getPurchaseInfo',
     args: address ? [address] : undefined,
-    query: { enabled: !!address },
+    query: { enabled: !!address, refetchInterval: 30000 },
   });
 
-  const { data: userBalance, refetch: refetchUserBalance } = useReadContract({
-    address: CURRENT_CONTRACTS.TOKEN as `0x${string}`,
+  // Get user's token balance (for ERC20 purchases)
+  const { data: userTokenBalance, refetch: refetchTokenBalance } = useReadContract({
+    address: selectedCurrency !== 'ETH'
+      ? ({
+          ETH: undefined,
+          USDT: CURRENT_CONTRACTS.USDT,
+          USDC: CURRENT_CONTRACTS.USDC,
+          DAI: CURRENT_CONTRACTS.DAI,
+        }[selectedCurrency] as `0x${string}` | undefined)
+      : undefined,
     abi: TOKEN_ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: !!address },
+    query: { enabled: !!address && selectedCurrency !== 'ETH', refetchInterval: 15000 },
   });
 
+  // Get allowance for ERC20 tokens
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
-    address: CURRENT_CONTRACTS.TOKEN as `0x${string}`,
+    address: selectedCurrency !== 'ETH'
+      ? ({
+          ETH: undefined,
+          USDT: CURRENT_CONTRACTS.USDT,
+          USDC: CURRENT_CONTRACTS.USDC,
+          DAI: CURRENT_CONTRACTS.DAI,
+        }[selectedCurrency] as `0x${string}` | undefined)
+      : undefined,
     abi: TOKEN_ABI,
     functionName: 'allowance',
-    args: address && selectedCurrency === 'FOR' ? [address, CURRENT_CONTRACTS.SALE as `0x${string}`] : undefined,
-    query: { enabled: !!address && selectedCurrency === 'FOR' },
+    args: address ? [address, CURRENT_CONTRACTS.SALE as `0x${string}`] : undefined,
+    query: { enabled: !!address && selectedCurrency !== 'ETH', refetchInterval: 15000 },
   });
 
   // ── Write Contracts ───────────────────────────────────────────────────────────
   const { writeContractAsync: approve } = useWriteContract();
   const { writeContractAsync: purchaseWithEth } = useWriteContract();
-  const { writeContractAsync: purchaseWithERC20 } = useWriteContract();
+  const { writeContractAsync: purchaseWithErc20 } = useWriteContract();
 
-  const { isSuccess: txConfirmed } = useWaitForTransactionReceipt({
+  const { isSuccess: txConfirmed, isLoading: txIsWaiting } = useWaitForTransactionReceipt({
     hash: txHash ?? undefined,
     query: { enabled: !!txHash },
   });
@@ -153,114 +178,111 @@ export default function BuyPage() {
     if (txConfirmed && step === 'waiting') {
       setStep('idle');
       setSuccess(true);
-      refetchUserBalance();
-      refetchPurchaseInfo();
-      refetchAllowance();
+      setTimeout(() => {
+        refetchPurchaseInfo();
+        refetchTokenBalance();
+        refetchAllowance();
+      }, 1000);
     }
-  }, [txConfirmed, step, refetchUserBalance, refetchPurchaseInfo, refetchAllowance]);
+  }, [txConfirmed, step, refetchPurchaseInfo, refetchTokenBalance, refetchAllowance]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
-  const handleBuy = async (data: {
-    currency: Currency;
-    tokenAmount: bigint;
-    currencyAmount: bigint;
-  }) => {
-    setError(null);
-    setSuccess(false);
-    setSelectedCurrency(data.currency);
+  const handleBuy = useCallback(
+    async (data: {
+      currency: Currency;
+      tokenAmount: bigint;
+      currencyAmount: bigint;
+    }) => {
+      setError(null);
+      setSuccess(false);
+      setSelectedCurrency(data.currency);
 
-    try {
-      // ETH Purchase
-      if (data.currency === 'FOR') {
-        // Need to approve first
-        if (!allowance || allowance < data.currencyAmount) {
-          setStep('approving');
-          const approveTx = await approve({
-            address: CURRENT_CONTRACTS.TOKEN as `0x${string}`,
-            abi: TOKEN_ABI,
-            functionName: 'approve',
-            args: [CURRENT_CONTRACTS.SALE as `0x${string}`, data.currencyAmount],
+      try {
+        if (data.currency === 'ETH') {
+          console.log('Starting ETH purchase:', {
+            amount: formatUnits(data.currencyAmount, 18),
+            tokenAmount: formatUnits(data.tokenAmount, 18),
           });
-          setTxHash(approveTx);
-          setStep('approved');
-          // Wait for approval to confirm before proceeding
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+
+          setStep('purchasing');
+          const purchaseTx = await purchaseWithEth({
+            address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+            abi: SALE_ABI,
+            functionName: 'purchaseWithEth',
+            value: data.currencyAmount,
+          });
+          console.log('ETH purchase tx:', purchaseTx);
+          setTxHash(purchaseTx);
+          setStep('waiting');
         } else {
-          setStep('approved');
-        }
+          const currencyAddress = {
+            ETH: undefined,
+            USDT: CURRENT_CONTRACTS.USDT,
+            USDC: CURRENT_CONTRACTS.USDC,
+            DAI: CURRENT_CONTRACTS.DAI,
+          }[data.currency] as `0x${string}`;
 
-        // Now purchase
-        setStep('purchasing');
-        const purchaseTx = await purchaseWithERC20({
-          address: CURRENT_CONTRACTS.SALE as `0x${string}`,
-          abi: SALE_ABI,
-          functionName: 'purchaseWithERC20',
-          args: [CURRENT_CONTRACTS.TOKEN as `0x${string}`, data.currencyAmount],
-        });
-        setTxHash(purchaseTx);
-        setStep('waiting');
-      } else {
-        // ERC20 Purchase (USDT, USDC, DAI)
-        const currencyAddress = {
-          USDT: CURRENT_CONTRACTS.USDT,
-          USDC: CURRENT_CONTRACTS.USDC,
-          DAI: CURRENT_CONTRACTS.DAI,
-          FOR: CURRENT_CONTRACTS.TOKEN,
-        }[data.currency] as `0x${string}`;
-
-        // Check and approve if needed
-        const { data: currencyAllowance } = await useReadContract({
-          address: currencyAddress,
-          abi: TOKEN_ABI,
-          functionName: 'allowance',
-          args: [address!, CURRENT_CONTRACTS.SALE as `0x${string}`],
-        });
-
-        if (!currencyAllowance || currencyAllowance < data.currencyAmount) {
-          setStep('approving');
-          const approveTx = await approve({
+          console.log('Starting ERC20 purchase:', {
+            currency: data.currency,
             address: currencyAddress,
-            abi: TOKEN_ABI,
-            functionName: 'approve',
-            args: [CURRENT_CONTRACTS.SALE as `0x${string}`, data.currencyAmount],
+            amount: formatUnits(data.currencyAmount, 6),
+            tokenAmount: formatUnits(data.tokenAmount, 18),
           });
-          setTxHash(approveTx);
-          setStep('approved');
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        } else {
-          setStep('approved');
-        }
 
-        // Now purchase
-        setStep('purchasing');
-        const purchaseTx = await purchaseWithERC20({
-          address: CURRENT_CONTRACTS.SALE as `0x${string}`,
-          abi: SALE_ABI,
-          functionName: 'purchaseWithERC20',
-          args: [currencyAddress, data.currencyAmount],
-        });
-        setTxHash(purchaseTx);
-        setStep('waiting');
+          if (!allowance || allowance < data.currencyAmount) {
+            console.log('Approval needed. Current allowance:', allowance ? formatUnits(allowance, 6) : '0');
+            setStep('approving');
+            const approveTx = await approve({
+              address: currencyAddress,
+              abi: TOKEN_ABI,
+              functionName: 'approve',
+              args: [CURRENT_CONTRACTS.SALE as `0x${string}`, data.currencyAmount],
+            });
+            console.log('Approval tx:', approveTx);
+            setTxHash(approveTx);
+            setStep('approved');
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+            await refetchAllowance();
+          } else {
+            console.log('Approval not needed. Current allowance:', formatUnits(allowance, 6));
+            setStep('approved');
+          }
+
+          setStep('purchasing');
+          const purchaseTx = await purchaseWithErc20({
+            address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+            abi: SALE_ABI,
+            functionName: 'purchaseWithERC20',
+            args: [currencyAddress, data.currencyAmount],
+          });
+          console.log('ERC20 purchase tx:', purchaseTx);
+          setTxHash(purchaseTx);
+          setStep('waiting');
+        }
+      } catch (err) {
+        const errorMsg = parseContractError(err);
+        console.error('Purchase error:', err);
+        setError(errorMsg);
+        setStep('idle');
       }
-    } catch (err) {
-      setError(parseContractError(err));
-      setStep('idle');
-    }
-  };
+    },
+    [approve, purchaseWithEth, purchaseWithErc20, allowance, refetchAllowance]
+  );
 
   // ── Derived Values ────────────────────────────────────────────────────────────
   const stateInfo = SALE_STATES[Number(saleState ?? 0)] ?? SALE_STATES[0];
   const isActive = Number(saleState) === 1;
   const salesProgress =
-    totalSold && saleCap && (saleCap as bigint) > 0n
+    totalSold && saleCap && (saleCap as bigint) > BigInt(0)
       ? Math.min(100, (Number(formatUnits(totalSold as bigint, 18)) / Number(formatUnits(saleCap as bigint, 18))) * 100)
       : 0;
 
-  const userPurchased = purchaseInfo?.[0] ?? 0n;
-  const userRemainingCap = purchaseInfo?.[1] ?? 0n;
-  const cooldownRemaining = purchaseInfo?.[3] ?? 0n;
+  const userPurchased = purchaseInfo?.[0] ?? BigInt(0);
+  const userRemainingCap = purchaseInfo?.[1] ?? BigInt(0);
+  const cooldownRemaining = purchaseInfo?.[3] ?? BigInt(0);
 
-  const isLoading = step !== 'idle';
+  const userBalance = selectedCurrency === 'ETH' ? undefined : userTokenBalance;
+  const isLoading = step !== 'idle' || txIsWaiting;
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
@@ -291,7 +313,9 @@ export default function BuyPage() {
             <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold text-white">Sale Status</h2>
-                <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${stateInfo.bg} ${stateInfo.color}`}>
+                <div
+                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${stateInfo.bg} ${stateInfo.color}`}
+                >
                   {isActive && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
                   {stateInfo.label}
                 </div>
@@ -376,9 +400,19 @@ export default function BuyPage() {
 
             {/* Info Box */}
             <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-4 text-xs text-zinc-500 space-y-2">
-              <p>• <span className="text-zinc-300">25% of tokens</span> are released immediately upon purchase.</p>
-              <p>• <span className="text-zinc-300">75% of tokens</span> are allocated to your vesting schedule (180-day cliff + 4 tranches).</p>
-              <p>• Purchases are subject to <span className="text-zinc-300">wallet caps and cooldown periods</span>.</p>
+              <p>
+                • <span className="text-zinc-300">25% of tokens</span> are released immediately upon purchase.
+              </p>
+              <p>
+                • <span className="text-zinc-300">75% of tokens</span> are allocated to your vesting schedule (180-day
+                cliff + 4 tranches).
+              </p>
+              <p>
+                • Purchases are subject to <span className="text-zinc-300">wallet caps and cooldown periods</span>.
+              </p>
+              <p>
+                • Pay with <span className="text-zinc-300">ETH, USDT, USDC, or DAI</span> on Sepolia testnet.
+              </p>
             </div>
           </motion.div>
 

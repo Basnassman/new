@@ -27,6 +27,20 @@ export const SALE_ABI = [
   { name: 'walletCap', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { name: 'purchaseCooldown', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { name: 'availableTokensInVesting', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  {
+  name: 'totalBuyers',
+  type: 'function',
+  stateMutability: 'view',
+  inputs: [],
+  outputs: [{ type: 'uint256' }],
+},
+{
+  name: 'getSaleState',
+  type: 'function',
+  stateMutability: 'view',
+  inputs: [],
+  outputs: [{ type: 'uint8' }],
+},
 ] as const;
 
 export const AIRDROP_ABI = [
@@ -44,6 +58,20 @@ export const AIRDROP_ABI = [
   { name: 'timeUntilDeadline', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { name: 'getAirdropState', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] },
   { name: 'getLeaf', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }, { name: '_amount', type: 'uint256' }], outputs: [{ type: 'bytes32' }] },
+  {
+  name: 'airdropState',
+  type: 'function',
+  stateMutability: 'view',
+  inputs: [],
+  outputs: [{ type: 'uint8' }],
+},
+{
+  name: 'hasClaimed',
+  type: 'function',
+  stateMutability: 'view',
+  inputs: [{ name: '', type: 'address' }],
+  outputs: [{ type: 'bool' }],
+},
 ] as const;
 
 export const VESTING_ABI = [

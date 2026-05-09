@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, FC } from 'react';
 import { useReadContract } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CURRENT_CONTRACTS } from '@/config/contracts';
 import { SALE_ABI, TOKEN_ABI } from '@/config/abis';
 
-export type Currency = 'FOR' | 'USDT' | 'USDC' | 'DAI';
+export type Currency = 'ETH' | 'USDT' | 'USDC' | 'DAI';
 
 interface CalculatorProps {
   connected: boolean;
@@ -25,68 +25,86 @@ interface CalculatorProps {
 interface CurrencyInfo {
   value: Currency;
   label: string;
-  address: `0x${string}`;
+  address?: `0x${string}`;
   enabled: boolean;
-  decimals?: number;
-  price?: bigint; // Price in wei
+  decimals: number;
+  isNative: boolean;
 }
 
 const CURRENCIES: CurrencyInfo[] = [
   {
-    value: 'FOR',
-    label: 'FOR (Direct)',
-    address: CURRENT_CONTRACTS.TOKEN as `0x${string}`,
+    value: 'ETH',
+    label: 'ETH',
+    address: undefined,
     enabled: true,
+    decimals: 18,
+    isNative: true,
   },
   {
     value: 'USDT',
     label: 'USDT',
     address: CURRENT_CONTRACTS.USDT as `0x${string}`,
     enabled: true,
+    decimals: 6,
+    isNative: false,
   },
   {
     value: 'USDC',
     label: 'USDC',
     address: CURRENT_CONTRACTS.USDC as `0x${string}`,
     enabled: true,
+    decimals: 6,
+    isNative: false,
   },
   {
     value: 'DAI',
     label: 'DAI',
     address: CURRENT_CONTRACTS.DAI as `0x${string}`,
     enabled: true,
+    decimals: 18,
+    isNative: false,
   },
 ];
 
-export default function Calculator({
+const Calculator: FC<CalculatorProps> = ({
   connected,
   onBuy,
   loading,
   userBalance,
   userPurchased,
   walletCap,
-}: CalculatorProps) {
-  const [currency, setCurrency] = useState<Currency>('FOR');
+}) => {
+  const [currency, setCurrency] = useState<Currency>('ETH');
   const [amount, setAmount] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isCalculating, setIsCalculating] = useState(false);
 
   // ── Get currency info ──
-  const selectedCurrencyInfo = CURRENCIES.find((c) => c.value === currency);
+  const selectedCurrencyInfo = useMemo(
+    () => CURRENCIES.find((c) => c.value === currency),
+    [currency]
+  );
 
   // ── Read token price from Sale contract ──
-  const { data: tokenPrice } = useReadContract({
+  const { data: tokenPrice, isLoading: tokenPriceLoading } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
     functionName: 'tokenPrice',
+    query: {
+      refetchInterval: 10000,
+    },
   });
 
-  // ── Read currency decimals & price from Sale contract ──
-  const { data: currencyInfo } = useReadContract({
+  // ── Read currency price from Sale contract (for ERC20 tokens only) ──
+  const { data: currencyInfo, isLoading: currencyInfoLoading } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
     functionName: 'getCurrencyInfo',
-    args: selectedCurrencyInfo ? [selectedCurrencyInfo.address] : undefined,
-    query: { enabled: !!selectedCurrencyInfo },
+    args: selectedCurrencyInfo?.address ? [selectedCurrencyInfo.address] : undefined,
+    query: {
+      enabled: !!selectedCurrencyInfo?.address && !selectedCurrencyInfo?.isNative,
+      refetchInterval: 10000,
+    },
   });
 
   // ── Read remaining sale cap ──
@@ -94,91 +112,107 @@ export default function Calculator({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
     functionName: 'remainingSaleCap',
+    query: {
+      refetchInterval: 30000,
+    },
   });
 
-  // ── Read remaining wallet cap ──
-  const { data: remainingWalletCap } = useReadContract({
-    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
-    abi: SALE_ABI,
-    functionName: 'remainingWalletCap',
-    args: ['0x0000000000000000000000000000000000000000'], // Will be replaced in buy.tsx
-    query: { enabled: false }, // Disabled here, will be called from parent
-  });
+  // ── Derived values with proper defaults ──
+  const currencyDecimals = selectedCurrencyInfo?.decimals ?? 18;
 
-  // ── Derived values ──
-  const currencyDecimals = currencyInfo?.[1] ?? 18;
-  const currencyPrice = currencyInfo?.[2] ?? 0n;
-  const tokenPriceValue = tokenPrice ?? 0n;
+  const currencyPrice = useMemo(() => {
+    if (selectedCurrencyInfo?.isNative) {
+      return tokenPrice ?? BigInt(1);
+    } else {
+      const info = currencyInfo as any;
+      return info?.[2] ?? BigInt(1);
+    }
+  }, [selectedCurrencyInfo?.isNative, tokenPrice, currencyInfo]);
+
+  const tokenPriceValue = useMemo(() => tokenPrice ?? BigInt(1), [tokenPrice]);
 
   // ── Calculate token amount from currency amount ──
   const calculateTokenAmount = (currencyAmount: string): bigint => {
-    if (!currencyAmount || isNaN(parseFloat(currencyAmount))) return 0n;
-    if (tokenPriceValue === 0n || currencyPrice === 0n) return 0n;
+    if (!currencyAmount || currencyAmount === '0' || isNaN(parseFloat(currencyAmount))) {
+      return BigInt(0);
+    }
 
     try {
+      if (tokenPriceValue === BigInt(0) || currencyPrice === BigInt(0)) {
+        return BigInt(0);
+      }
+
       const currencyAmountWei = parseUnits(currencyAmount, currencyDecimals);
-      // tokenAmount = (currencyAmount * tokenPrice) / currencyPrice
       const tokenAmount = (currencyAmountWei * tokenPriceValue) / currencyPrice;
       return tokenAmount;
-    } catch {
-      return 0n;
+    } catch (err) {
+      console.error('Calculation error:', err);
+      return BigInt(0);
     }
   };
 
-  // ── Calculate currency amount from token amount ──
-  const calculateCurrencyAmount = (tokenAmount: string): bigint => {
-    if (!tokenAmount || isNaN(parseFloat(tokenAmount))) return 0n;
-    if (tokenPriceValue === 0n || currencyPrice === 0n) return 0n;
-
+  // ── Compute amounts ──
+  const tokenAmount = useMemo(() => calculateTokenAmount(amount), [amount, tokenPriceValue, currencyPrice, currencyDecimals]);
+  const currencyAmount = useMemo(() => {
     try {
-      const tokenAmountWei = parseUnits(tokenAmount, 18);
-      // currencyAmount = (tokenAmount * currencyPrice) / tokenPrice
-      const currencyAmount = (tokenAmountWei * currencyPrice) / tokenPriceValue;
-      return currencyAmount;
+      return parseUnits(amount || '0', currencyDecimals);
     } catch {
-      return 0n;
+      return BigInt(0);
     }
-  };
-
-  const tokenAmount = calculateTokenAmount(amount);
-  const currencyAmount = parseUnits(amount || '0', currencyDecimals);
+  }, [amount, currencyDecimals]);
 
   // ── Validation ──
   useEffect(() => {
     setError(null);
+    setIsCalculating(tokenPriceLoading || currencyInfoLoading);
 
-    if (!amount || parseFloat(amount) === 0) return;
+    if (!amount || parseFloat(amount) === 0) {
+      return;
+    }
 
     const numAmount = parseFloat(amount);
 
-    // Check minimum purchase
     if (numAmount < 0.01) {
       setError('Minimum purchase is 0.01');
       return;
     }
 
-    // Check user balance
     if (userBalance && currencyAmount > userBalance) {
-      setError(`Insufficient balance. You have ${formatUnits(userBalance, currencyDecimals)} ${currency}`);
+      setError(
+        `Insufficient balance. You have ${formatUnits(userBalance, currencyDecimals)} ${currency}`
+      );
       return;
     }
 
-    // Check wallet cap
     if (walletCap && tokenAmount > walletCap) {
-      setError(`Exceeds wallet cap. You can buy ${formatUnits(walletCap, 18)} more FOR`);
+      setError(
+        `Exceeds wallet cap. You can buy ${formatUnits(walletCap, 18)} more FOR`
+      );
       return;
     }
 
-    // Check sale cap
     if (remainingSaleCap && tokenAmount > remainingSaleCap) {
-      setError(`Exceeds remaining sale cap. Only ${formatUnits(remainingSaleCap, 18)} FOR left`);
+      setError(
+        `Exceeds remaining sale cap. Only ${formatUnits(remainingSaleCap, 18)} FOR left`
+      );
       return;
     }
-  }, [amount, userBalance, walletCap, remainingSaleCap, tokenAmount, currencyAmount, currencyDecimals, currency]);
+  }, [
+    amount,
+    userBalance,
+    walletCap,
+    remainingSaleCap,
+    tokenAmount,
+    currencyAmount,
+    currencyDecimals,
+    currency,
+    tokenPriceLoading,
+    currencyInfoLoading,
+  ]);
 
   // ── Handlers ──
   const handleBuy = () => {
-    if (!selectedCurrencyInfo || !amount) return;
+    if (!selectedCurrencyInfo || !amount || error) return;
 
     onBuy({
       currency,
@@ -189,17 +223,39 @@ export default function Calculator({
 
   const handleMax = () => {
     if (!userBalance) return;
-    const maxCurrency = formatUnits(userBalance, currencyDecimals);
-    setAmount(maxCurrency);
+    try {
+      const maxCurrency = formatUnits(userBalance, currencyDecimals);
+      setAmount(maxCurrency);
+    } catch {
+      setAmount('0');
+    }
   };
 
   // ── Format display values ──
-  const displayTokenAmount = tokenAmount > 0n ? formatUnits(tokenAmount, 18) : '0';
-  const displayCurrencyAmount = currencyAmount > 0n ? formatUnits(currencyAmount, currencyDecimals) : '0';
+  const displayTokenAmount = useMemo(() => {
+    try {
+      return tokenAmount > BigInt(0) ? formatUnits(tokenAmount, 18) : '0';
+    } catch {
+      return '0';
+    }
+  }, [tokenAmount]);
+
+  const displayCurrencyAmount = useMemo(() => {
+    try {
+      return currencyAmount > BigInt(0) ? formatUnits(currencyAmount, currencyDecimals) : '0';
+    } catch {
+      return '0';
+    }
+  }, [currencyAmount, currencyDecimals]);
 
   // ── Vesting breakdown (25% immediate + 75% vested) ──
-  const immediateTokens = tokenAmount > 0n ? tokenAmount / 4n : 0n;
-  const vestedTokens = tokenAmount > 0n ? (tokenAmount * 3n) / 4n : 0n;
+  const immediateTokens = useMemo(() => {
+    return tokenAmount > BigInt(0) ? tokenAmount / BigInt(4) : BigInt(0);
+  }, [tokenAmount]);
+
+  const vestedTokens = useMemo(() => {
+    return tokenAmount > BigInt(0) ? (tokenAmount * BigInt(3)) / BigInt(4) : BigInt(0);
+  }, [tokenAmount]);
 
   return (
     <motion.div
@@ -217,13 +273,18 @@ export default function Calculator({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
         >
-          Balance: <span className="text-teal-300 font-semibold">{formatUnits(userBalance, currencyDecimals)} {currency}</span>
+          Balance:{' '}
+          <span className="text-teal-300 font-semibold">
+            {formatUnits(userBalance, currencyDecimals)} {currency}
+          </span>
         </motion.div>
       )}
 
       {/* Currency Selection */}
       <div className="mb-4">
-        <label className="block text-xs text-zinc-500 mb-2 uppercase tracking-wider">Payment Currency</label>
+        <label className="block text-xs text-zinc-500 mb-2 uppercase tracking-wider">
+          Payment Method
+        </label>
         <div className="grid grid-cols-4 gap-2">
           {CURRENCIES.map((c) => (
             <motion.button
@@ -276,9 +337,20 @@ export default function Calculator({
         />
       </div>
 
+      {/* Loading Indicator */}
+      {isCalculating && amount && (
+        <motion.div
+          className="mb-3 text-xs text-zinc-400 text-center"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        >
+          Fetching prices...
+        </motion.div>
+      )}
+
       {/* Preview & Breakdown */}
       <AnimatePresence>
-        {amount && !error && (
+        {amount && !error && !isCalculating && (
           <motion.div
             className="mb-4 p-3 bg-zinc-800/50 rounded-lg space-y-2"
             initial={{ opacity: 0, height: 0 }}
@@ -320,11 +392,11 @@ export default function Calculator({
       {/* Buy Button */}
       <motion.button
         onClick={handleBuy}
-        disabled={loading || !connected || !amount || !!error}
-        whileHover={!loading && connected && amount && !error ? { scale: 1.02 } : {}}
-        whileTap={!loading && connected && amount && !error ? { scale: 0.98 } : {}}
+        disabled={loading || !connected || !amount || !!error || isCalculating}
+        whileHover={!loading && connected && amount && !error && !isCalculating ? { scale: 1.02 } : {}}
+        whileTap={!loading && connected && amount && !error && !isCalculating ? { scale: 0.98 } : {}}
         className={`w-full py-3 rounded-lg font-semibold transition-all flex items-center justify-center gap-2 ${
-          loading || !connected || !amount || error
+          loading || !connected || !amount || error || isCalculating
             ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
             : 'bg-gradient-to-r from-teal-500 to-teal-400 hover:from-teal-400 hover:to-teal-300 text-black active:scale-95'
         }`}
@@ -340,8 +412,12 @@ export default function Calculator({
 
       {/* Info Note */}
       <p className="text-xs text-zinc-500 text-center mt-4">
-        Tokens are allocated to your vesting schedule. Visit the Vesting page to track them.
+        {selectedCurrencyInfo?.isNative
+          ? 'ETH sent directly with transaction (no approval needed).'
+          : 'Requires approval before purchase.'}
       </p>
     </motion.div>
   );
-}
+};
+
+export default Calculator;
