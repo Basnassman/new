@@ -210,6 +210,7 @@ export default function BuyPage() {
             abi: SALE_ABI,
             functionName: 'purchaseWithEth',
             value: data.currencyAmount,
+             gas: 500000n,
           });
           console.log('ETH purchase tx:', purchaseTx);
           setTxHash(purchaseTx);
