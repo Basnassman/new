@@ -96,6 +96,13 @@ export default function BuyPage() {
     functionName: 'saleEnd',
   });
 
+  const { data: saleStart } = useReadContract({
+    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+    abi: SALE_ABI,
+    functionName: 'saleStart',
+  });
+
+
   const { data: totalBuyers } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
@@ -210,7 +217,6 @@ export default function BuyPage() {
             abi: SALE_ABI,
             functionName: 'purchaseWithEth',
             value: data.currencyAmount,
-             gas: 500000n,
           });
           console.log('ETH purchase tx:', purchaseTx);
           setTxHash(purchaseTx);
@@ -272,7 +278,15 @@ export default function BuyPage() {
 
   // ── Derived Values ────────────────────────────────────────────────────────────
   const stateInfo = SALE_STATES[Number(saleState ?? 0)] ?? SALE_STATES[0];
-  const isActive = Number(saleState) === 1;
+  const now = Math.floor(Date.now() / 1000);
+
+const isTimeValid =
+  saleStart &&
+  saleEnd &&
+  now >= Number(saleStart) &&
+  now <= Number(saleEnd);
+
+const isActive = Number(saleState) === 1 && isTimeValid;
   const salesProgress =
     totalSold && saleCap && (saleCap as bigint) > BigInt(0)
       ? Math.min(100, (Number(formatUnits(totalSold as bigint, 18)) / Number(formatUnits(saleCap as bigint, 18))) * 100)
