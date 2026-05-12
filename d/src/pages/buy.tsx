@@ -215,7 +215,7 @@ export default function BuyPage() {
           const purchaseTx = await purchaseWithEth({
             address: CURRENT_CONTRACTS.SALE as `0x${string}`,
             abi: SALE_ABI,
-            functionName: 'purchaseWithEth',
+            functionName: 'purchaseWithETH',
             value: data.currencyAmount,
           });
           console.log('ETH purchase tx:', purchaseTx);

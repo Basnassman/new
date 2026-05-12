@@ -8,7 +8,7 @@ export const TOKEN_ABI = [
 ] as const;
 
 export const SALE_ABI = [
-  { name: 'purchaseWithEth', type: 'function', stateMutability: 'payable', inputs: [], outputs: [] },
+  { name: 'purchaseWithETH', type: 'function', stateMutability: 'payable', inputs: [], outputs: [] },
   { name: 'purchaseWithERC20', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: '_currency', type: 'address' }, { name: '_amount', type: 'uint256' }], outputs: [] },
   { name: 'previewTokenAmount', type: 'function', stateMutability: 'view', inputs: [{ name: '_currency', type: 'address' }, { name: '_paidAmount', type: 'uint256' }], outputs: [{ name: 'tokenAmount', type: 'uint256' }] },
   { name: 'canPurchase', type: 'function', stateMutability: 'view', inputs: [{ name: '_user', type: 'address' }, { name: '_tokenAmount', type: 'uint256' }], outputs: [{ type: 'bool' }] },
