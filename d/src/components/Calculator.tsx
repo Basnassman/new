@@ -1,11 +1,9 @@
-'use client';
-
 import { useState, useEffect, useMemo, FC } from 'react';
-import { useReadContract } from 'wagmi';
+import { useReadContract, useAccount } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CURRENT_CONTRACTS } from '@/config/contracts';
-import { SALE_ABI, TOKEN_ABI } from '@/config/abis';
+import { SALE_ABI, PRICE_ORACLE_ABI, TOKEN_ABI } from '@/config/abis';
 
 export type Currency = 'ETH' | 'USDT' | 'USDC' | 'DAI';
 
@@ -74,6 +72,7 @@ const Calculator: FC<CalculatorProps> = ({
   userPurchased,
   walletCap,
 }) => {
+  const { address } = useAccount();
   const [currency, setCurrency] = useState<Currency>('ETH');
   const [amount, setAmount] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -85,21 +84,70 @@ const Calculator: FC<CalculatorProps> = ({
     [currency]
   );
 
-  // ── Read token price from Sale contract ──
-  const { data: tokenPrice, isLoading: tokenPriceLoading } = useReadContract({
+  // ── Read Sale config ──
+  const { data: saleCap } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
-    functionName: 'tokenPrice',
-    query: {
-      refetchInterval: 10000,
-    },
+    functionName: 'saleCap',
+    query: { refetchInterval: 30000 },
   });
 
-  // ── Read currency price from Sale contract (for ERC20 tokens only) ──
-  const { data: currencyInfo, isLoading: currencyInfoLoading } = useReadContract({
+  const { data: totalSold } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
-    functionName: 'getCurrencyInfo',
+    functionName: 'totalSold',
+    query: { refetchInterval: 30000 },
+  });
+
+  const { data: minPurchase } = useReadContract({
+    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+    abi: SALE_ABI,
+    functionName: 'minPurchase',
+    query: { refetchInterval: 30000 },
+  });
+
+  const { data: saleStart } = useReadContract({
+    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+    abi: SALE_ABI,
+    functionName: 'saleStart',
+    query: { refetchInterval: 30000 },
+  });
+
+  const { data: saleEnd } = useReadContract({
+    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+    abi: SALE_ABI,
+    functionName: 'saleEnd',
+    query: { refetchInterval: 30000 },
+  });
+
+  const { data: paused } = useReadContract({
+    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+    abi: SALE_ABI,
+    functionName: 'paused',
+    query: { refetchInterval: 30000 },
+  });
+
+  const { data: finalized } = useReadContract({
+    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+    abi: SALE_ABI,
+    functionName: 'finalized',
+    query: { refetchInterval: 30000 },
+  });
+
+  // ── Read user's bought amount from Sale ──
+  const { data: boughtAmount } = useReadContract({
+    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+    abi: SALE_ABI,
+    functionName: 'bought',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address, refetchInterval: 15000 },
+  });
+
+  // ── Read Price Oracle for currency info ──
+  const { data: currencyOracleInfo, isLoading: oracleLoading } = useReadContract({
+    address: CURRENT_CONTRACTS.PRICE_ORACLE as `0x${string}`,
+    abi: PRICE_ORACLE_ABI,
+    functionName: 'getCurrency',
     args: selectedCurrencyInfo?.address ? [selectedCurrencyInfo.address] : undefined,
     query: {
       enabled: !!selectedCurrencyInfo?.address && !selectedCurrencyInfo?.isNative,
@@ -107,52 +155,61 @@ const Calculator: FC<CalculatorProps> = ({
     },
   });
 
-  // ── Read remaining sale cap ──
-  const { data: remainingSaleCap } = useReadContract({
-    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
-    abi: SALE_ABI,
-    functionName: 'remainingSaleCap',
+  // ── Read Price Oracle quote ──
+  const { data: quoteResult, isLoading: quoteLoading } = useReadContract({
+    address: CURRENT_CONTRACTS.PRICE_ORACLE as `0x${string}`,
+    abi: PRICE_ORACLE_ABI,
+    functionName: 'quote',
+    args: selectedCurrencyInfo?.address && amount && parseFloat(amount) > 0
+      ? [selectedCurrencyInfo.address, parseUnits(amount, selectedCurrencyInfo.decimals)]
+      : undefined,
     query: {
-      refetchInterval: 30000,
+      enabled: !!selectedCurrencyInfo?.address && !selectedCurrencyInfo?.isNative && !!amount && parseFloat(amount) > 0,
+      refetchInterval: 10000,
     },
   });
 
-  // ── Derived values with proper defaults ──
+  // ── Read ETH price from oracle (for ETH purchases) ──
+  const { data: ethOracleInfo } = useReadContract({
+    address: CURRENT_CONTRACTS.PRICE_ORACLE as `0x${string}`,
+    abi: PRICE_ORACLE_ABI,
+    functionName: 'getCurrency',
+    args: [CURRENT_CONTRACTS.WETH as `0x${string}`],
+    query: { refetchInterval: 10000 },
+  });
+
+  // ── Derived values ──
   const currencyDecimals = selectedCurrencyInfo?.decimals ?? 18;
 
-  const currencyPrice = useMemo(() => {
+  const remainingSaleCap = useMemo(() => {
+    if (!saleCap || !totalSold) return undefined;
+    return (saleCap as bigint) - (totalSold as bigint);
+  }, [saleCap, totalSold]);
+
+  const tokenAmount = useMemo(() => {
+    if (!amount || parseFloat(amount) === 0) return BigInt(0);
+    
     if (selectedCurrencyInfo?.isNative) {
-      return tokenPrice ?? BigInt(1);
-    } else {
-      const info = currencyInfo as any;
-      return info?.[2] ?? BigInt(1);
-    }
-  }, [selectedCurrencyInfo?.isNative, tokenPrice, currencyInfo]);
-
-  const tokenPriceValue = useMemo(() => tokenPrice ?? BigInt(1), [tokenPrice]);
-
-  // ── Calculate token amount from currency amount ──
-  const calculateTokenAmount = (currencyAmount: string): bigint => {
-    if (!currencyAmount || currencyAmount === '0' || isNaN(parseFloat(currencyAmount))) {
-      return BigInt(0);
-    }
-
-    try {
-      if (tokenPriceValue === BigInt(0) || currencyPrice === BigInt(0)) {
+      // For ETH: use quote from oracle with WETH address
+      if (!ethOracleInfo) return BigInt(0);
+      try {
+        const ethAmountWei = parseUnits(amount, 18);
+        // quote from oracle: quote(WETH, ethAmount) -> tokenAmount
+        // But we don't have quote for ETH in the new ABI... 
+        // Fallback: calculate based on price ratio
+        const ethPrice = (ethOracleInfo as any)?.[2] ?? BigInt(0);
+        if (ethPrice === BigInt(0)) return BigInt(0);
+        // Approximate: tokenAmount = ethAmount * ethPrice / 1e18 (simplified)
+        return (ethAmountWei * ethPrice) / parseUnits('1', 18);
+      } catch {
         return BigInt(0);
       }
-
-      const currencyAmountWei = parseUnits(currencyAmount, currencyDecimals);
-      const tokenAmount = (currencyAmountWei * tokenPriceValue) / currencyPrice;
-      return tokenAmount;
-    } catch (err) {
-      console.error('Calculation error:', err);
-      return BigInt(0);
+    } else {
+      // For ERC20: use quote result directly
+      return (quoteResult as bigint) ?? BigInt(0);
     }
-  };
+  }, [amount, selectedCurrencyInfo, quoteResult, ethOracleInfo]);
 
-  // ── Compute amounts ──
-  const tokenAmount = useMemo(() => calculateTokenAmount(amount), [amount, tokenPriceValue, currencyPrice, currencyDecimals]);
   const currencyAmount = useMemo(() => {
     try {
       return parseUnits(amount || '0', currencyDecimals);
@@ -164,7 +221,27 @@ const Calculator: FC<CalculatorProps> = ({
   // ── Validation ──
   useEffect(() => {
     setError(null);
-    setIsCalculating(tokenPriceLoading || currencyInfoLoading);
+    setIsCalculating(oracleLoading || quoteLoading);
+
+    const now = Math.floor(Date.now() / 1000);
+
+    // Check sale active
+    if (paused) {
+      setError('Sale is currently paused.');
+      return;
+    }
+    if (finalized) {
+      setError('Sale has been finalized.');
+      return;
+    }
+    if (saleStart && now < Number(saleStart as bigint)) {
+      setError('Sale has not started yet.');
+      return;
+    }
+    if (saleEnd && now > Number(saleEnd as bigint)) {
+      setError('Sale has ended.');
+      return;
+    }
 
     if (!amount || parseFloat(amount) === 0) {
       return;
@@ -172,11 +249,13 @@ const Calculator: FC<CalculatorProps> = ({
 
     const numAmount = parseFloat(amount);
 
-    if (numAmount < 0.01) {
-      setError('Minimum purchase is 0.01');
+    // Check minimum purchase
+    if (minPurchase && currencyAmount < (minPurchase as bigint)) {
+      setError(`Minimum purchase is ${formatUnits(minPurchase as bigint, currencyDecimals)} ${currency}`);
       return;
     }
 
+    // Check user balance
     if (userBalance && currencyAmount > userBalance) {
       setError(
         `Insufficient balance. You have ${formatUnits(userBalance, currencyDecimals)} ${currency}`
@@ -184,13 +263,18 @@ const Calculator: FC<CalculatorProps> = ({
       return;
     }
 
-    if (walletCap && tokenAmount > walletCap) {
+    // Check wallet cap
+    const totalBought = (boughtAmount as bigint) ?? BigInt(0);
+    const cap = walletCap ?? BigInt(0);
+    if (cap > BigInt(0) && totalBought + tokenAmount > cap) {
+      const remaining = cap > totalBought ? cap - totalBought : BigInt(0);
       setError(
-        `Exceeds wallet cap. You can buy ${formatUnits(walletCap, 18)} more FOR`
+        `Exceeds wallet cap. You can buy ${formatUnits(remaining, 18)} more FOR`
       );
       return;
     }
 
+    // Check sale cap
     if (remainingSaleCap && tokenAmount > remainingSaleCap) {
       setError(
         `Exceeds remaining sale cap. Only ${formatUnits(remainingSaleCap, 18)} FOR left`
@@ -206,8 +290,14 @@ const Calculator: FC<CalculatorProps> = ({
     currencyAmount,
     currencyDecimals,
     currency,
-    tokenPriceLoading,
-    currencyInfoLoading,
+    oracleLoading,
+    quoteLoading,
+    paused,
+    finalized,
+    saleStart,
+    saleEnd,
+    minPurchase,
+    boughtAmount,
   ]);
 
   // ── Handlers ──

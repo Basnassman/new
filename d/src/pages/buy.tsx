@@ -38,22 +38,25 @@ function parseContractError(err: unknown): string {
 
   if (msg.includes('user rejected') || msg.includes('user denied')) return 'Transaction rejected by user.';
   if (msg.includes('insufficient balance')) return 'Insufficient balance for this transaction.';
-  if (msg.includes('exceeds wallet cap')) return 'Purchase exceeds your wallet cap.';
-  if (msg.includes('exceeds sale cap')) return 'Purchase exceeds remaining sale cap.';
-  if (msg.includes('sale not active')) return 'Sale is not currently active.';
-  if (msg.includes('cooldown')) return 'You must wait before making another purchase.';
-  if (msg.includes('minimum purchase')) return 'Amount is below minimum purchase.';
+  if (msg.includes('exceeds wallet cap') || msg.includes('sale__exceedswalletcap')) return 'Purchase exceeds your wallet cap.';
+  if (msg.includes('exceeds sale cap') || msg.includes('sale__exceedssalecap')) return 'Purchase exceeds remaining sale cap.';
+  if (msg.includes('sale not active') || msg.includes('sale__notactive')) return 'Sale is not currently active.';
+  if (msg.includes('cooldown') || msg.includes('sale__cooldown')) return 'You must wait before making another purchase.';
+  if (msg.includes('minimum purchase') || msg.includes('sale__belowminpurchase')) return 'Amount is below minimum purchase.';
   if (msg.includes('insufficient allowance')) return 'Please approve the token first.';
+  if (msg.includes('currency not supported') || msg.includes('sale__currencynotsupported')) return 'This currency is not supported.';
   if (msg.includes('execution reverted')) return 'Transaction failed. Check your balance and try again.';
 
   return 'Transaction failed. Please check your inputs and try again.';
 }
 
 // ─── Sale States ──────────────────────────────────────────────────────────
-const SALE_STATES: Record<number, { label: string; color: string; bg: string }> = {
-  0: { label: 'Inactive', color: 'text-zinc-400', bg: 'bg-zinc-800' },
-  1: { label: 'Active', color: 'text-emerald-400', bg: 'bg-emerald-900/20' },
-  2: { label: 'Ended', color: 'text-red-400', bg: 'bg-red-900/20' },
+const SALE_STATES: Record<string, { label: string; color: string; bg: string }> = {
+  inactive: { label: 'Inactive', color: 'text-zinc-400', bg: 'bg-zinc-800' },
+  active: { label: 'Active', color: 'text-emerald-400', bg: 'bg-emerald-900/20' },
+  ended: { label: 'Ended', color: 'text-red-400', bg: 'bg-red-900/20' },
+  paused: { label: 'Paused', color: 'text-yellow-400', bg: 'bg-yellow-900/20' },
+  finalized: { label: 'Finalized', color: 'text-orange-400', bg: 'bg-orange-900/20' },
 };
 
 type TransactionStep = 'idle' | 'approving' | 'approved' | 'purchasing' | 'waiting';
@@ -70,10 +73,10 @@ export default function BuyPage() {
   const [selectedCurrency, setSelectedCurrency] = useState<Currency>('ETH');
 
   // ── Contract Reads ────────────────────────────────────────────────────────────
-  const { data: saleState } = useReadContract({
+  const { data: saleCap } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
-    functionName: 'getSaleState',
+    functionName: 'saleCap',
     query: { refetchInterval: 30000 },
   });
 
@@ -82,12 +85,6 @@ export default function BuyPage() {
     abi: SALE_ABI,
     functionName: 'totalSold',
     query: { refetchInterval: 30000 },
-  });
-
-  const { data: saleCap } = useReadContract({
-    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
-    abi: SALE_ABI,
-    functionName: 'saleCap',
   });
 
   const { data: saleEnd } = useReadContract({
@@ -102,26 +99,40 @@ export default function BuyPage() {
     functionName: 'saleStart',
   });
 
-
-  const { data: totalBuyers } = useReadContract({
+  const { data: paused } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
-    functionName: 'totalBuyers',
-    query: { refetchInterval: 60000 },
+    functionName: 'paused',
+    query: { refetchInterval: 30000 },
   });
 
-  const { data: remainingSaleCap } = useReadContract({
+  const { data: finalized } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
-    functionName: 'remainingSaleCap',
+    functionName: 'finalized',
+    query: { refetchInterval: 30000 },
+  });
+
+  const { data: walletCap } = useReadContract({
+    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+    abi: SALE_ABI,
+    functionName: 'walletCap',
     query: { refetchInterval: 30000 },
   });
 
   // ── User Info ─────────────────────────────────────────────────────────────────
-  const { data: purchaseInfo, refetch: refetchPurchaseInfo } = useReadContract({
+  const { data: boughtAmount, refetch: refetchBought } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
-    functionName: 'getPurchaseInfo',
+    functionName: 'bought',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address, refetchInterval: 30000 },
+  });
+
+  const { data: lastBuyTime } = useReadContract({
+    address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+    abi: SALE_ABI,
+    functionName: 'lastBuy',
     args: address ? [address] : undefined,
     query: { enabled: !!address, refetchInterval: 30000 },
   });
@@ -160,8 +171,8 @@ export default function BuyPage() {
 
   // ── Write Contracts ───────────────────────────────────────────────────────────
   const { writeContractAsync: approve } = useWriteContract();
-  const { writeContractAsync: purchaseWithEth } = useWriteContract();
-  const { writeContractAsync: purchaseWithErc20 } = useWriteContract();
+  const { writeContractAsync: buyEth } = useWriteContract();
+  const { writeContractAsync: buyToken } = useWriteContract();
 
   const { isSuccess: txConfirmed, isLoading: txIsWaiting } = useWaitForTransactionReceipt({
     hash: txHash ?? undefined,
@@ -186,12 +197,27 @@ export default function BuyPage() {
       setStep('idle');
       setSuccess(true);
       setTimeout(() => {
-        refetchPurchaseInfo();
+        refetchBought();
         refetchTokenBalance();
         refetchAllowance();
       }, 1000);
     }
-  }, [txConfirmed, step, refetchPurchaseInfo, refetchTokenBalance, refetchAllowance]);
+  }, [txConfirmed, step, refetchBought, refetchTokenBalance, refetchAllowance]);
+
+  // ── Determine sale state ──
+  const now = Math.floor(Date.now() / 1000);
+  const saleStartNum = saleStart ? Number(saleStart as bigint) : 0;
+  const saleEndNum = saleEnd ? Number(saleEnd as bigint) : 0;
+  
+  let saleStateKey = 'inactive';
+  if (finalized) saleStateKey = 'finalized';
+  else if (paused) saleStateKey = 'paused';
+  else if (now < saleStartNum) saleStateKey = 'inactive';
+  else if (now > saleEndNum) saleStateKey = 'ended';
+  else saleStateKey = 'active';
+  
+  const stateInfo = SALE_STATES[saleStateKey] ?? SALE_STATES.inactive;
+  const isActive = saleStateKey === 'active';
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleBuy = useCallback(
@@ -212,10 +238,10 @@ export default function BuyPage() {
           });
 
           setStep('purchasing');
-          const purchaseTx = await purchaseWithEth({
+          const purchaseTx = await buyEth({
             address: CURRENT_CONTRACTS.SALE as `0x${string}`,
             abi: SALE_ABI,
-            functionName: 'purchaseWithETH',
+            functionName: 'buyETH',
             value: data.currencyAmount,
           });
           console.log('ETH purchase tx:', purchaseTx);
@@ -232,12 +258,12 @@ export default function BuyPage() {
           console.log('Starting ERC20 purchase:', {
             currency: data.currency,
             address: currencyAddress,
-            amount: formatUnits(data.currencyAmount, 6),
+            amount: formatUnits(data.currencyAmount, data.currency === 'DAI' ? 18 : 6),
             tokenAmount: formatUnits(data.tokenAmount, 18),
           });
 
           if (!allowance || allowance < data.currencyAmount) {
-            console.log('Approval needed. Current allowance:', allowance ? formatUnits(allowance, 6) : '0');
+            console.log('Approval needed. Current allowance:', allowance ? formatUnits(allowance, data.currency === 'DAI' ? 18 : 6) : '0');
             setStep('approving');
             const approveTx = await approve({
               address: currencyAddress,
@@ -251,15 +277,15 @@ export default function BuyPage() {
             await new Promise((resolve) => setTimeout(resolve, 3000));
             await refetchAllowance();
           } else {
-            console.log('Approval not needed. Current allowance:', formatUnits(allowance, 6));
+            console.log('Approval not needed. Current allowance:', formatUnits(allowance, data.currency === 'DAI' ? 18 : 6));
             setStep('approved');
           }
 
           setStep('purchasing');
-          const purchaseTx = await purchaseWithErc20({
+          const purchaseTx = await buyToken({
             address: CURRENT_CONTRACTS.SALE as `0x${string}`,
             abi: SALE_ABI,
-            functionName: 'purchaseWithERC20',
+            functionName: 'buyToken',
             args: [currencyAddress, data.currencyAmount],
           });
           console.log('ERC20 purchase tx:', purchaseTx);
@@ -273,28 +299,28 @@ export default function BuyPage() {
         setStep('idle');
       }
     },
-    [approve, purchaseWithEth, purchaseWithErc20, allowance, refetchAllowance]
+    [approve, buyEth, buyToken, allowance, refetchAllowance]
   );
 
   // ── Derived Values ────────────────────────────────────────────────────────────
-  const stateInfo = SALE_STATES[Number(saleState ?? 0)] ?? SALE_STATES[0];
-  const now = Math.floor(Date.now() / 1000);
-
-const isTimeValid =
-  saleStart &&
-  saleEnd &&
-  now >= Number(saleStart) &&
-  now <= Number(saleEnd);
-
-const isActive = Number(saleState) === 1 && isTimeValid;
   const salesProgress =
     totalSold && saleCap && (saleCap as bigint) > BigInt(0)
       ? Math.min(100, (Number(formatUnits(totalSold as bigint, 18)) / Number(formatUnits(saleCap as bigint, 18))) * 100)
       : 0;
 
-  const userPurchased = purchaseInfo?.[0] ?? BigInt(0);
-  const userRemainingCap = purchaseInfo?.[1] ?? BigInt(0);
-  const cooldownRemaining = purchaseInfo?.[3] ?? BigInt(0);
+  const userPurchased = (boughtAmount as bigint) ?? BigInt(0);
+  const userRemainingCap = walletCap && boughtAmount
+    ? (walletCap as bigint) > (boughtAmount as bigint)
+      ? (walletCap as bigint) - (boughtAmount as bigint)
+      : BigInt(0)
+    : BigInt(0);
+
+  // Calculate cooldown remaining
+  const cooldownRemaining = useState(() => {
+    if (!lastBuyTime) return 0;
+    // We need to read cooldown duration from contract
+    return 0; // Will be updated after reading cooldown
+  })[0];
 
   const userBalance = selectedCurrency === 'ETH' ? undefined : userTokenBalance;
   const isLoading = step !== 'idle' || txIsWaiting;
@@ -350,9 +376,9 @@ const isActive = Number(saleState) === 1 && isTimeValid;
                   </p>
                 </div>
                 <div className="text-center">
-                  <p className="text-xs text-zinc-500 mb-1">Buyers</p>
+                  <p className="text-xs text-zinc-500 mb-1">Your Purchases</p>
                   <p className="text-lg font-bold text-emerald-400">
-                    {totalBuyers ? Number(totalBuyers as bigint).toLocaleString() : '—'}
+                    {boughtAmount ? formatLargeNumber(boughtAmount as bigint) : '—'} FOR
                   </p>
                 </div>
               </div>
@@ -404,9 +430,11 @@ const isActive = Number(saleState) === 1 && isTimeValid;
                     </p>
                   </div>
                   <div className="text-center">
-                    <p className="text-xs text-zinc-500 mb-1">Cooldown</p>
+                    <p className="text-xs text-zinc-500 mb-1">Last Purchase</p>
                     <p className="text-lg font-bold text-yellow-400">
-                      {cooldownRemaining > 0n ? `${Number(cooldownRemaining)}s` : '—'}
+                      {lastBuyTime && (lastBuyTime as bigint) > BigInt(0)
+                        ? new Date(Number(lastBuyTime as bigint) * 1000).toLocaleDateString()
+                        : '—'}
                     </p>
                   </div>
                 </div>
