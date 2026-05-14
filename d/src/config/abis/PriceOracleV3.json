@@ -1,4 +1,0 @@
-price_oracle_abi = [
-    {"inputs":[{"internalType":"address","name":"currency","type":"address"}],"name":"getCurrency","outputs":[{"internalType":"bool","name":"supported","type":"bool"},{"internalType":"uint8","name":"decimals","type":"uint8"},{"internalType":"uint256","name":"priceUsd","type":"uint256"}],"stateMutability":"view","type":"function"},
-    {"inputs":[{"internalType":"address","name":"currency","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"quote","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
-]
