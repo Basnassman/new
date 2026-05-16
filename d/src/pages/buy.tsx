@@ -221,86 +221,91 @@ export default function BuyPage() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleBuy = useCallback(
-    async (data: {
-      currency: Currency;
-      tokenAmount: bigint;
-      currencyAmount: bigint;
-    }) => {
-      setError(null);
-      setSuccess(false);
-      setSelectedCurrency(data.currency);
+  async (data: {
+    currency: Currency;           // عنوان العملة
+    tokenAmount: bigint;
+    currencyAmount: bigint;
+    decimals: number;             // عدد المنازل العشرية للعملة
+  }) => {
+    setError(null);
+    setSuccess(false);
+    setSelectedCurrency(data.currency);
 
-      try {
-        if (data.currency === 'ETH') {
-          console.log('Starting ETH purchase:', {
-            amount: formatUnits(data.currencyAmount, 18),
-            tokenAmount: formatUnits(data.tokenAmount, 18),
-          });
+    try {
+      const isEth = data.currency.toLowerCase() === CURRENT_CONTRACTS.WETH.toLowerCase();
 
-          setStep('purchasing');
-          const purchaseTx = await buyEth({
-            address: CURRENT_CONTRACTS.SALE as `0x${string}`,
-            abi: SALE_ABI,
-            functionName: 'buyETH',
-            value: data.currencyAmount,
-          });
-          console.log('ETH purchase tx:', purchaseTx);
-          setTxHash(purchaseTx);
-          setStep('waiting');
-        } else {
-          const currencyAddress = {
-            ETH: undefined,
-            USDT: CURRENT_CONTRACTS.USDT,
-            USDC: CURRENT_CONTRACTS.USDC,
-            DAI: CURRENT_CONTRACTS.DAI,
-          }[data.currency] as `0x${string}`;
+      if (isEth) {
+        console.log('Starting ETH purchase:', {
+          amount: formatUnits(data.currencyAmount, 18),
+          tokenAmount: formatUnits(data.tokenAmount, 18),
+        });
 
-          console.log('Starting ERC20 purchase:', {
-            currency: data.currency,
+        setStep('purchasing');
+        const purchaseTx = await buyEth({
+          address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+          abi: SALE_ABI,
+          functionName: 'buyETH',
+          value: data.currencyAmount,
+        });
+        console.log('ETH purchase tx:', purchaseTx);
+        setTxHash(purchaseTx);
+        setStep('waiting');
+      } else {
+        const currencyAddress = data.currency as `0x${string}`;
+
+        console.log('Starting ERC20 purchase:', {
+          currency: data.currency,
+          address: currencyAddress,
+          amount: formatUnits(data.currencyAmount, data.decimals),
+          tokenAmount: formatUnits(data.tokenAmount, 18),
+        });
+
+        // التحقق من allowance
+        if (!allowance || allowance < data.currencyAmount) {
+          console.log(
+            'Approval needed. Current allowance:',
+            allowance ? formatUnits(allowance, data.decimals) : '0'
+          );
+          setStep('approving');
+          const approveTx = await approve({
             address: currencyAddress,
-            amount: formatUnits(data.currencyAmount, data.currency === 'DAI' ? 18 : 6),
-            tokenAmount: formatUnits(data.tokenAmount, 18),
+            abi: TOKEN_ABI,
+            functionName: 'approve',
+            args: [CURRENT_CONTRACTS.SALE as `0x${string}`, data.currencyAmount],
           });
-
-          if (!allowance || allowance < data.currencyAmount) {
-            console.log('Approval needed. Current allowance:', allowance ? formatUnits(allowance, data.currency === 'DAI' ? 18 : 6) : '0');
-            setStep('approving');
-            const approveTx = await approve({
-              address: currencyAddress,
-              abi: TOKEN_ABI,
-              functionName: 'approve',
-              args: [CURRENT_CONTRACTS.SALE as `0x${string}`, data.currencyAmount],
-            });
-            console.log('Approval tx:', approveTx);
-            setTxHash(approveTx);
-            setStep('approved');
-            await new Promise((resolve) => setTimeout(resolve, 3000));
-            await refetchAllowance();
-          } else {
-            console.log('Approval not needed. Current allowance:', formatUnits(allowance, data.currency === 'DAI' ? 18 : 6));
-            setStep('approved');
-          }
-
-          setStep('purchasing');
-          const purchaseTx = await buyToken({
-            address: CURRENT_CONTRACTS.SALE as `0x${string}`,
-            abi: SALE_ABI,
-            functionName: 'buyToken',
-            args: [currencyAddress, data.currencyAmount],
-          });
-          console.log('ERC20 purchase tx:', purchaseTx);
-          setTxHash(purchaseTx);
-          setStep('waiting');
+          console.log('Approval tx:', approveTx);
+          setTxHash(approveTx);
+          setStep('approved');
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          await refetchAllowance();
+        } else {
+          console.log(
+            'Approval not needed. Current allowance:',
+            formatUnits(allowance, data.decimals)
+          );
+          setStep('approved');
         }
-      } catch (err) {
-        const errorMsg = parseContractError(err);
-        console.error('Purchase error:', err);
-        setError(errorMsg);
-        setStep('idle');
+
+        setStep('purchasing');
+        const purchaseTx = await buyToken({
+          address: CURRENT_CONTRACTS.SALE as `0x${string}`,
+          abi: SALE_ABI,
+          functionName: 'buyToken',
+          args: [currencyAddress, data.currencyAmount],
+        });
+        console.log('ERC20 purchase tx:', purchaseTx);
+        setTxHash(purchaseTx);
+        setStep('waiting');
       }
-    },
-    [approve, buyEth, buyToken, allowance, refetchAllowance]
-  );
+    } catch (err) {
+      const errorMsg = parseContractError(err);
+      console.error('Purchase error:', err);
+      setError(errorMsg);
+      setStep('idle');
+    }
+  },
+  [approve, buyEth, buyToken, allowance, refetchAllowance]
+);
 
   // ── Derived Values ────────────────────────────────────────────────────────────
   const salesProgress =
@@ -444,12 +449,11 @@ export default function BuyPage() {
             {/* Info Box */}
             <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-4 text-xs text-zinc-500 space-y-2">
               <p>
-                • <span className="text-zinc-300">25% of tokens</span> are released immediately upon purchase.
-              </p>
-              <p>
-                • <span className="text-zinc-300">75% of tokens</span> are allocated to your vesting schedule (180-day
-                cliff + 4 tranches).
-              </p>
+               • <span className="text-zinc-300">100% of tokens</span> are locked and start vesting on May 20, 2026.
+            </p>
+             <p>
+               • Tokens are released in <span className="text-zinc-300">4 daily tranches</span> after cliff.
+             </p>
               <p>
                 • Purchases are subject to <span className="text-zinc-300">wallet caps and cooldown periods</span>.
               </p>
