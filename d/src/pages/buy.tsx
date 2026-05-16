@@ -222,17 +222,18 @@ export default function BuyPage() {
   // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleBuy = useCallback(
   async (data: {
-    currency: Currency;           // عنوان العملة
+    currency: Currency;        // عنوان العملة
     tokenAmount: bigint;
     currencyAmount: bigint;
-    decimals: number;             // عدد المنازل العشرية للعملة
+    decimals: number;          // المنازل العشرية للعملة
   }) => {
     setError(null);
     setSuccess(false);
     setSelectedCurrency(data.currency);
 
     try {
-      const isEth = data.currency.toLowerCase() === CURRENT_CONTRACTS.WETH.toLowerCase();
+      // تحديد ما إذا كانت العملة هي ETH (العنوان الصفري)
+      const isEth = data.currency === '0x0000000000000000000000000000000000000000';
 
       if (isEth) {
         console.log('Starting ETH purchase:', {
@@ -260,12 +261,9 @@ export default function BuyPage() {
           tokenAmount: formatUnits(data.tokenAmount, 18),
         });
 
-        // التحقق من allowance
+        // الموافقة على الصرف إذا لزم الأمر
         if (!allowance || allowance < data.currencyAmount) {
-          console.log(
-            'Approval needed. Current allowance:',
-            allowance ? formatUnits(allowance, data.decimals) : '0'
-          );
+          console.log('Approval needed. Current allowance:', allowance ? formatUnits(allowance, data.decimals) : '0');
           setStep('approving');
           const approveTx = await approve({
             address: currencyAddress,
@@ -279,10 +277,7 @@ export default function BuyPage() {
           await new Promise((resolve) => setTimeout(resolve, 3000));
           await refetchAllowance();
         } else {
-          console.log(
-            'Approval not needed. Current allowance:',
-            formatUnits(allowance, data.decimals)
-          );
+          console.log('Approval not needed. Current allowance:', formatUnits(allowance, data.decimals));
           setStep('approved');
         }
 

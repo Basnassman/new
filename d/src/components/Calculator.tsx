@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CURRENT_CONTRACTS } from '@/config/contracts';
 import { SALE_ABI, PRICE_ORACLE_ABI, TOKEN_ABI } from '@/config/abis';
 
-export type Currency = string; // عنوان العملة المستخدم
+export type Currency = string; // عنوان العملة (address)
 
 interface CalculatorProps {
   connected: boolean;
@@ -15,7 +15,7 @@ interface CalculatorProps {
     currency: Currency;
     tokenAmount: bigint;
     currencyAmount: bigint;
-    decimals: number;
+    decimals: number; // مهم جدًا لإرسال المنازل العشرية الصحيحة
   }) => void;
   loading: boolean;
   userBalance?: bigint;
@@ -30,12 +30,30 @@ interface CurrencyInfo {
   isNative: boolean;
 }
 
-// معلومات ثابتة للعملات المعروفة (نربطها بالعناوين)
+// ─── قائمة تفاصيل العملات المعروفة (للتجميل فقط) ─────────────────
 const KNOWN_CURRENCIES: Record<string, Omit<CurrencyInfo, 'address'>> = {
-  [CURRENT_CONTRACTS.WETH.toLowerCase()]: { symbol: 'ETH', decimals: 18, isNative: true },
-  [CURRENT_CONTRACTS.USDT.toLowerCase()]: { symbol: 'USDT', decimals: 6, isNative: false },
-  [CURRENT_CONTRACTS.USDC.toLowerCase()]: { symbol: 'USDC', decimals: 6, isNative: false },
-  [CURRENT_CONTRACTS.DAI.toLowerCase()]: { symbol: 'DAI', decimals: 18, isNative: false },
+  // العنوان الصفري هو ETH
+  '0x0000000000000000000000000000000000000000': {
+    symbol: 'ETH',
+    decimals: 18,
+    isNative: true,
+  },
+  // أضف عناوين Sepolia الحقيقية لـ USDT, USDC, DAI إن وُجدت
+  [CURRENT_CONTRACTS.USDT?.toLowerCase() ?? '']: {
+    symbol: 'USDT',
+    decimals: 6,
+    isNative: false,
+  },
+  [CURRENT_CONTRACTS.USDC?.toLowerCase() ?? '']: {
+    symbol: 'USDC',
+    decimals: 6,
+    isNative: false,
+  },
+  [CURRENT_CONTRACTS.DAI?.toLowerCase() ?? '']: {
+    symbol: 'DAI',
+    decimals: 18,
+    isNative: false,
+  },
 };
 
 const Calculator: FC<CalculatorProps> = ({
@@ -52,7 +70,7 @@ const Calculator: FC<CalculatorProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
 
-  // ── جلب العملات المدعومة من العقد ──
+  // ── جلب العملات النشطة من العقد ──
   const { data: supportedCurrencies } = useReadContract({
     address: CURRENT_CONTRACTS.PRICE_ORACLE as `0x${string}`,
     abi: PRICE_ORACLE_ABI,
@@ -74,19 +92,20 @@ const Calculator: FC<CalculatorProps> = ({
           isNative: known.isNative,
         };
       }
-      // عملة غير معروفة: نعطي معلومات افتراضية
+      // عملة غير معروفة: نعرض أول 6 حروف من العنوان
       return {
         address: addr,
-        symbol: addr.slice(0, 6) + '...', // اختصار العنوان
+        symbol: addr.slice(0, 6) + '...',
         decimals: 18,
         isNative: false,
       };
     });
   }, [supportedCurrencies]);
 
-  // اختيار العملة الافتراضية عند تحميل القائمة
+  // اختيار افتراضي عند تحميل القائمة
   useEffect(() => {
     if (!selectedCurrencyAddress && currencies.length > 0) {
+      // نفضل ETH إذا كانت موجودة
       const eth = currencies.find(c => c.isNative);
       setSelectedCurrencyAddress(eth ? eth.address : currencies[0].address);
     }
@@ -97,7 +116,7 @@ const Calculator: FC<CalculatorProps> = ({
     [currencies, selectedCurrencyAddress]
   );
 
-  // ── قراءة بيانات البيع ──
+  // ── قراءة إعدادات البيع من العقد ──
   const { data: saleCap } = useReadContract({
     address: CURRENT_CONTRACTS.SALE as `0x${string}`,
     abi: SALE_ABI,
@@ -155,7 +174,7 @@ const Calculator: FC<CalculatorProps> = ({
     query: { enabled: !!address, refetchInterval: 15000 },
   });
 
-  // ── السعر الديناميكي باستخدام quote ──
+  // ── السعر: استخدام quote للعملة المختارة ──
   const { data: quoteResult, isLoading: quoteLoading } = useReadContract({
     address: CURRENT_CONTRACTS.PRICE_ORACLE as `0x${string}`,
     abi: PRICE_ORACLE_ABI,
@@ -170,7 +189,7 @@ const Calculator: FC<CalculatorProps> = ({
     },
   });
 
-  // القيم المشتقة
+  // ── القيم المشتقة ──
   const currencyDecimals = selectedCurrencyInfo?.decimals ?? 18;
 
   const remainingSaleCap = useMemo(() => {
@@ -188,7 +207,7 @@ const Calculator: FC<CalculatorProps> = ({
     }
   }, [amount, currencyDecimals]);
 
-  // ── التحقق من الأخطاء (نفس المنطق السابق) ──
+  // ── التحقق من الأخطاء ──
   useEffect(() => {
     setError(null);
     setIsCalculating(quoteLoading && !!amount && parseFloat(amount) > 0);
@@ -257,7 +276,7 @@ const Calculator: FC<CalculatorProps> = ({
       <h2 className="text-2xl font-bold text-teal-400 mb-1 text-center">Buy FOR Tokens</h2>
       <p className="text-xs text-zinc-500 text-center mb-4">100% locked · Vesting starts May 20</p>
 
-      {/* User Balance */}
+      {/* رصيد المستخدم */}
       {connected && userBalance !== undefined && selectedCurrencyInfo && (
         <motion.div
           className="text-sm text-zinc-400 text-center mb-4 p-2 bg-zinc-800/50 rounded-lg"
@@ -271,7 +290,7 @@ const Calculator: FC<CalculatorProps> = ({
         </motion.div>
       )}
 
-      {/* Currency Selection - ديناميكي */}
+      {/* اختيار العملة - ديناميكي */}
       <div className="mb-4">
         <label className="block text-xs text-zinc-500 mb-2 uppercase tracking-wider">
           Payment Method
@@ -295,7 +314,7 @@ const Calculator: FC<CalculatorProps> = ({
         </div>
       </div>
 
-      {/* Amount Input */}
+      {/* إدخال المبلغ */}
       <div className="mb-4">
         <div className="flex justify-between items-center mb-2">
           <label className="block text-xs text-zinc-500 uppercase tracking-wider">
@@ -322,7 +341,7 @@ const Calculator: FC<CalculatorProps> = ({
         />
       </div>
 
-      {/* Loading indicator */}
+      {/* مؤشر التحميل */}
       {isCalculating && (
         <motion.div
           className="mb-3 text-xs text-zinc-400 text-center"
@@ -333,7 +352,7 @@ const Calculator: FC<CalculatorProps> = ({
         </motion.div>
       )}
 
-      {/* Preview */}
+      {/* معاينة التوكنات */}
       <AnimatePresence>
         {amount && !error && !isCalculating && (
           <motion.div
@@ -350,7 +369,7 @@ const Calculator: FC<CalculatorProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Error */}
+      {/* رسالة خطأ */}
       <AnimatePresence>
         {error && (
           <motion.div
@@ -364,7 +383,7 @@ const Calculator: FC<CalculatorProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Buy Button */}
+      {/* زر الشراء */}
       <motion.button
         onClick={handleBuy}
         disabled={loading || !connected || !amount || !!error || isCalculating}
